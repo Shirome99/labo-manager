@@ -9,23 +9,49 @@ Initialise une base de DÉMONSTRATION (Neon, ou base locale vide) : migrations, 
   les 3 sections et tous les statuts, en passant par l'API (mêmes règles métier que l'application :
   numérotation, double regard, rapport figé…).
 
-Aucun mot de passe n'est écrit dans le code ni dans un fichier : ils viennent des variables
-d'environnement. Relançable : les comptes existants sont gardés, et les échantillons ne sont créés
-que si la base n'en contient aucun.
+Aucun mot de passe n'est écrit dans le code ni dans un fichier. Relançable : les comptes existants
+sont gardés, et les échantillons ne sont créés que si la base n'en contient aucun.
 
-Usage (depuis backend/, venv avec requirements-dev.txt, pour httpx) — PowerShell :
-    $env:DATABASE_URL = "<chaîne Neon, collée telle quelle>"
-    $env:DEMO_ADMIN_MDP = "…" ; $env:DEMO_MDP = "…"
-    python scripts/init_demo.py                 # base de DATABASE_URL
+Usage le plus simple (depuis backend/, venv avec requirements-dev.txt, pour httpx) :
+    python scripts/init_demo.py
+Le script demande alors, sans les afficher, ce qui n'est pas déjà défini : la chaîne de connexion
+Neon (DATABASE_URL), le mot de passe du compte admin (DEMO_ADMIN_MDP) et celui des comptes demo_*
+(DEMO_MDP). Il affiche la base visée et demande confirmation avant d'écrire.
+
+Sans saisie (variables d'environnement, PowerShell — apostrophes conseillées) :
+    $env:DATABASE_URL = '<chaîne Neon>' ; $env:DEMO_ADMIN_MDP = '…' ; $env:DEMO_MDP = '…'
+    python scripts/init_demo.py --oui           # --oui : pas de confirmation
     python scripts/init_demo.py --creer         # base locale : la crée si elle n'existe pas
 """
 import argparse
 import asyncio
+import getpass
 import os
+import re
 import secrets
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
+
+INTERACTIF = sys.stdin.isatty()
+
+
+def _chaine_collee(texte: str) -> str:
+    """Chaîne Neon collée telle quelle : retire guillemets et préfixe `psql`, garde l'URL."""
+    texte = texte.strip().strip("'\"")
+    m = re.search(r"postgres(?:ql)?(?:\+asyncpg)?://\S+", texte)
+    return m.group(0).strip("'\"") if m else texte
+
+
+# La chaîne de connexion doit être connue AVANT d'importer la configuration de l'application.
+if (__name__ == "__main__" and not os.environ.get("DATABASE_URL") and INTERACTIF
+        and not {"-h", "--help"} & set(sys.argv)):
+    print("DATABASE_URL n'est pas défini dans cette fenêtre.")
+    saisie = getpass.getpass("Collez la chaîne de connexion Neon (rien ne s'affiche, c'est normal) puis Entrée.\n"
+                             "Entrée seule = base locale de backend/.env : ")
+    if saisie.strip():
+        os.environ["DATABASE_URL"] = _chaine_collee(saisie)
 
 # L'application est importée en mode démonstration (clé de travail aléatoire si absente : seuls les
 # comptes et les données restent en base, aucun jeton émis ici n'est réutilisé)
@@ -59,11 +85,38 @@ ETAPES = ["recu", "saisi", "soumis", "valide", "emis"]
 PAR_SECTION = {"SMA": [3, 2, 2, 2, 3], "SCHA": [2, 2, 2, 2, 2], "SSA": [2, 2, 1, 1, 2]}
 
 
-def mot_de_passe(var: str) -> str:
-    mdp = os.environ.get(var, "")
-    if not mot_de_passe_conforme(mdp):
-        raise SystemExit(f"Variable {var} absente ou non conforme. {MDP_REGLE}")
-    return mdp
+def _defaut_mdp(mdp: str) -> str:
+    """Ce qui manque à un mot de passe, sans jamais l'afficher."""
+    manque = []
+    if len(mdp) < 10:
+        manque.append(f"{len(mdp)} caractère(s) seulement")
+    if not any(c.isalpha() for c in mdp):
+        manque.append("aucune lettre")
+    if not any(c.isdigit() for c in mdp):
+        manque.append("aucun chiffre")
+    return ", ".join(manque) or "non conforme"
+
+
+def mot_de_passe(var: str, compte: str) -> str:
+    """Mot de passe de la variable `var`, sinon demandé au clavier (masqué, avec confirmation)."""
+    mdp = os.environ.get(var)
+    if mdp:
+        if mot_de_passe_conforme(mdp):
+            return mdp
+        raise SystemExit(f"La variable {var} est définie mais refusée ({_defaut_mdp(mdp)}). {MDP_REGLE}\n"
+                         f"Corrigez-la, ou supprimez-la pour que le mot de passe soit demandé : "
+                         f"Remove-Item Env:{var}")
+    if not INTERACTIF:
+        raise SystemExit(f"Variable {var} absente (mot de passe {compte}). {MDP_REGLE}")
+    while True:
+        mdp = getpass.getpass(f"Mot de passe {compte} (au moins 10 caractères, lettres et chiffres) : ")
+        if not mot_de_passe_conforme(mdp):
+            print(f"  Refusé : {_defaut_mdp(mdp)}. Recommencez.")
+            continue
+        if getpass.getpass("  Confirmez : ") != mdp:
+            print("  Les deux saisies sont différentes. Recommencez.")
+            continue
+        return mdp
 
 
 async def comptes(conn, admin: str, mdp_admin: str, mdp_demo: str) -> None:
@@ -165,12 +218,21 @@ async def echantillons(admin: str, mdp_admin: str, mdp_demo: str) -> int:
     return n
 
 
-async def principal(creer: bool) -> int:
+async def principal(creer: bool, oui: bool = False) -> int:
     base = settings.nom_base
     if base in BASES_INTERDITES:
-        raise SystemExit(f"Base refusée : {base} (jamais la base du laboratoire ; utilisez une base de démonstration).")
+        raise SystemExit(f"Base refusée : {base} (jamais la base du laboratoire ; utilisez une base de démonstration).\n"
+                         "Définissez DATABASE_URL avec la chaîne Neon, ou lancez le script sans et collez-la.")
+    hote = urlsplit(migrer.url()).hostname or "?"
+    source = "DATABASE_URL" if os.environ.get("DATABASE_URL") else "backend/.env"
+    print(f"Base visée : {base} sur {hote} (connexion lue dans {source}).")
+    if INTERACTIF and not oui:
+        if input("Continuer ? (o/N) ").strip().lower() not in ("o", "oui", "y", "yes"):
+            raise SystemExit("Annulé : rien n'a été écrit.")
+
     admin = os.environ.get("DEMO_ADMIN", "admin")
-    mdp_admin, mdp_demo = mot_de_passe("DEMO_ADMIN_MDP"), mot_de_passe("DEMO_MDP")
+    mdp_admin = mot_de_passe("DEMO_ADMIN_MDP", f"du compte {admin}")
+    mdp_demo = mot_de_passe("DEMO_MDP", "des comptes demo_*")
 
     print(f"Base de démonstration : {base}")
     if creer:
@@ -197,4 +259,18 @@ async def principal(creer: bool) -> int:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     ap.add_argument("--creer", action="store_true", help="crée la base si elle n'existe pas (base locale)")
-    sys.exit(asyncio.run(principal(ap.parse_args().creer)))
+    ap.add_argument("--oui", action="store_true", help="ne pas demander confirmation avant d'écrire")
+    a = ap.parse_args()
+    try:
+        sys.exit(asyncio.run(principal(a.creer, a.oui)))
+    except (OSError, asyncpg.PostgresError) as e:
+        hote = urlsplit(migrer.url()).hostname or "?"
+        if isinstance(e, asyncpg.InvalidPasswordError):
+            cause = "mot de passe refusé : recopiez la chaîne depuis Neon (bouton Connect)"
+        elif isinstance(e, asyncpg.InvalidCatalogNameError):
+            cause = "base introuvable : vérifiez le nom de la base à la fin de la chaîne"
+        elif isinstance(e, OSError):
+            cause = "serveur injoignable : vérifiez l'hôte de la chaîne et votre connexion internet"
+        else:
+            cause = f"{type(e).__name__} : {e}"
+        raise SystemExit(f"Connexion impossible à {hote} ({cause}). Rien n'a été écrit ou l'opération a été annulée.")
