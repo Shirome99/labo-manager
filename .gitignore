@@ -1,0 +1,53 @@
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.coverage
+.coverage.*
+backend/tests/resultats/
+
+# ---- Node ----
+node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+
+# ---- Secrets ----
+.env
+.env.*
+!.env.exemple
+pgpass.conf
+*.pem
+*.key
+*.crt
+
+# ---- Données du laboratoire (jamais dans le dépôt) ----
+# Dumps SQL (dont le dump Access de 2010) : seules les migrations sont suivies
+*.sql
+!backend/migrations/*.sql
+*.dump
+*.backup
+*.csv
+*.xlsx
+*.xls
+*.pdf
+*.mdb
+*.accdb
+logs/
+rapport_import_access*
+# Copies de la racine (les originaux suivis sont dans backend/migrations/)
+/011_conformite_access.sql
+/012_paiement_analyses.sql
+
+# ---- Divers ----
+.DS_Store
+Thumbs.db
+*.log
+.claude/
+.vscode/
+.idea/
+
+# Résultats des tests de bout en bout
+frontend/e2e/resultats/

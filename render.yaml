@@ -1,0 +1,29 @@
+# Blueprint Render : API de démonstration (données fictives). Front : GitHub Pages ; base : Neon.
+# Render > New > Blueprint > ce dépôt. Les variables « sync: false » sont demandées à la création.
+services:
+  - type: web
+    name: labo-manager-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.2
+      - key: ENVIRONNEMENT
+        value: demo
+      - key: DATABASE_URL          # chaîne de connexion Neon (directe, hôte sans -pooler), collée telle quelle
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS          # https://<utilisateur>.github.io (sans le chemin du dépôt)
+        sync: false
+      - key: SESSION_HTTPS
+        value: "1"
+      - key: SESSION_INACTIVITE_MIN
+        value: "30"
+      - key: LOG_DIR
+        value: /tmp/lims-logs

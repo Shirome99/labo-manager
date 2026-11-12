@@ -1,0 +1,10 @@
+[run]
+# SQLAlchemy async exécute le code des routes à travers greenlet : sans cela, les lignes
+# qui suivent un accès à la base ne sont pas comptées.
+concurrency = greenlet, thread
+source = app
+omit =
+    app/__init__ .py
+
+[report]
+precision = 0
